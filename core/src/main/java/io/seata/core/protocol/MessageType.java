@@ -19,7 +19,6 @@ package io.seata.core.protocol;
  * The type Message codec type.
  *
  * @author zhangsen
- * @date 2019 /5/6
  */
 public class MessageType {
 
@@ -55,6 +54,14 @@ public class MessageType {
      * The constant TYPE_GLOBAL_STATUS_RESULT.
      */
     public static final short TYPE_GLOBAL_STATUS_RESULT = 16;
+    /**
+     * The constant TYPE_GLOBAL_REPORT.
+     */
+    public static final short TYPE_GLOBAL_REPORT = 17;
+    /**
+     * The constant TYPE_GLOBAL_REPORT_RESULT.
+     */
+    public static final short TYPE_GLOBAL_REPORT_RESULT = 18;
     /**
      * The constant TYPE_GLOBAL_LOCK_QUERY.
      */
@@ -126,4 +133,9 @@ public class MessageType {
      * The constant TYPE_RM_DELETE_UNDOLOG.
      */
     public static final short TYPE_RM_DELETE_UNDOLOG = 111;
+
+    /**
+     * the constant TYPE_HEARTBEAT_MSG
+     */
+    public static final short TYPE_HEARTBEAT_MSG = 120;
 }

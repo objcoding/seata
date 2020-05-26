@@ -20,20 +20,17 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-import io.seata.server.UUIDGenerator;
-import io.seata.server.coordinator.DefaultCoordinator;
-
 import io.netty.channel.Channel;
 import io.seata.core.protocol.ResultCode;
 import io.seata.core.protocol.transaction.BranchRegisterRequest;
 import io.seata.core.protocol.transaction.BranchRegisterResponse;
+import io.seata.server.coordinator.DefaultCoordinator;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /**
- * @author jimin.jm@alibaba-inc.com
- * @date 2019/01/25
+ * @author slievrly
  */
 @Disabled
 public class TmRpcClientTest {
@@ -56,7 +53,6 @@ public class TmRpcClientTest {
             public void run() {
                 RpcServer rpcServer = new RpcServer(workingThreads);
                 rpcServer.setHandler(new DefaultCoordinator(rpcServer));
-                UUIDGenerator.init(1);
                 rpcServer.init();
             }
         });
@@ -91,7 +87,6 @@ public class TmRpcClientTest {
             public void run() {
                 RpcServer rpcServer = new RpcServer(workingThreads);
                 rpcServer.setHandler(new DefaultCoordinator(rpcServer));
-                UUIDGenerator.init(1);
                 rpcServer.init();
             }
         });
@@ -117,7 +112,6 @@ public class TmRpcClientTest {
             public void run() {
                 RpcServer rpcServer = new RpcServer(workingThreads);
                 rpcServer.setHandler(new DefaultCoordinator(rpcServer));
-                UUIDGenerator.init(1);
                 rpcServer.init();
             }
         });

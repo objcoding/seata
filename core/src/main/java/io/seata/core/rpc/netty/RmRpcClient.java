@@ -24,9 +24,15 @@ import io.seata.common.thread.NamedThreadFactory;
 import io.seata.core.model.Resource;
 import io.seata.core.model.ResourceManager;
 import io.seata.core.protocol.AbstractMessage;
+import io.seata.core.protocol.MessageType;
 import io.seata.core.protocol.RegisterRMRequest;
 import io.seata.core.protocol.RegisterRMResponse;
 import io.seata.core.rpc.netty.NettyPoolKey.TransactionRole;
+import io.seata.core.rpc.processor.client.ClientHeartbeatProcessor;
+import io.seata.core.rpc.processor.client.ClientOnResponseProcessor;
+import io.seata.core.rpc.processor.client.RmBranchCommitProcessor;
+import io.seata.core.rpc.processor.client.RmBranchRollbackProcessor;
+import io.seata.core.rpc.processor.client.RmUndoLogProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,9 +50,9 @@ import static io.seata.common.Constants.DBKEYS_SPLIT_CHAR;
 /**
  * The type Rm rpc client.
  *
- * @author jimin.jm @alibaba-inc.com
+ * @author slievrly
  * @author zhaojun
- * @date 2018 /10/10
+ * @author zhangchenghui.dev@gmail.com
  */
 @Sharable
 public final class RmRpcClient extends AbstractRpcRemotingClient {
@@ -54,13 +60,12 @@ public final class RmRpcClient extends AbstractRpcRemotingClient {
     private static final Logger LOGGER = LoggerFactory.getLogger(RmRpcClient.class);
     private ResourceManager resourceManager;
     private static volatile RmRpcClient instance;
-    private String customerKeys;
     private final AtomicBoolean initialized = new AtomicBoolean(false);
     private static final long KEEP_ALIVE_TIME = Integer.MAX_VALUE;
     private static final int MAX_QUEUE_SIZE = 20000;
     private String applicationId;
     private String transactionServiceGroup;
-    
+
     private RmRpcClient(NettyClientConfig nettyClientConfig, EventExecutorGroup eventExecutorGroup,
                         ThreadPoolExecutor messageExecutor) {
         super(nettyClientConfig, eventExecutorGroup, messageExecutor, TransactionRole.RMROLE);
@@ -92,18 +97,16 @@ public final class RmRpcClient extends AbstractRpcRemotingClient {
                     NettyClientConfig nettyClientConfig = new NettyClientConfig();
                     final ThreadPoolExecutor messageExecutor = new ThreadPoolExecutor(
                         nettyClientConfig.getClientWorkerThreads(), nettyClientConfig.getClientWorkerThreads(),
-                        KEEP_ALIVE_TIME, TimeUnit.SECONDS,
-                        new LinkedBlockingQueue<>(MAX_QUEUE_SIZE),
+                        KEEP_ALIVE_TIME, TimeUnit.SECONDS, new LinkedBlockingQueue<>(MAX_QUEUE_SIZE),
                         new NamedThreadFactory(nettyClientConfig.getRmDispatchThreadPrefix(),
-                            nettyClientConfig.getClientWorkerThreads()),
-                        new ThreadPoolExecutor.CallerRunsPolicy());
+                            nettyClientConfig.getClientWorkerThreads()), new ThreadPoolExecutor.CallerRunsPolicy());
                     instance = new RmRpcClient(nettyClientConfig, null, messageExecutor);
                 }
             }
         }
         return instance;
     }
-    
+
     /**
      * Sets application id.
      *
@@ -112,7 +115,7 @@ public final class RmRpcClient extends AbstractRpcRemotingClient {
     public void setApplicationId(String applicationId) {
         this.applicationId = applicationId;
     }
-    
+
     /**
      * Sets transaction service group.
      *
@@ -121,7 +124,7 @@ public final class RmRpcClient extends AbstractRpcRemotingClient {
     public void setTransactionServiceGroup(String transactionServiceGroup) {
         this.transactionServiceGroup = transactionServiceGroup;
     }
-    
+
     /**
      * Sets resource manager.
      *
@@ -130,75 +133,57 @@ public final class RmRpcClient extends AbstractRpcRemotingClient {
     public void setResourceManager(ResourceManager resourceManager) {
         this.resourceManager = resourceManager;
     }
-    
-    /**
-     * Gets customer keys.
-     *
-     * @return the customer keys
-     */
-    public String getCustomerKeys() {
-        return customerKeys;
-    }
-    
-    /**
-     * Sets customer keys.
-     *
-     * @param customerKeys the customer keys
-     */
-    public void setCustomerKeys(String customerKeys) {
-        this.customerKeys = customerKeys;
-    }
-    
+
     @Override
     public void init() {
+        // registry processor
+        registerProcessor();
         if (initialized.compareAndSet(false, true)) {
             super.init();
         }
     }
-    
+
     @Override
     public void destroy() {
         super.destroy();
         initialized.getAndSet(false);
         instance = null;
     }
-    
+
     @Override
     protected Function<String, NettyPoolKey> getPoolKeyFunction() {
         return (serverAddress) -> {
-            String resourceIds = customerKeys == null ? getMergedResourceKeys() : customerKeys;
-            if (LOGGER.isInfoEnabled()) {
-                LOGGER.info("RM will register :" + resourceIds);
+            String resourceIds = getMergedResourceKeys();
+            if (null != resourceIds && LOGGER.isInfoEnabled()) {
+                LOGGER.info("RM will register :{}", resourceIds);
             }
             RegisterRMRequest message = new RegisterRMRequest(applicationId, transactionServiceGroup);
             message.setResourceIds(resourceIds);
             return new NettyPoolKey(NettyPoolKey.TransactionRole.RMROLE, serverAddress, message);
         };
     }
-    
+
+
     @Override
     protected String getTransactionServiceGroup() {
         return transactionServiceGroup;
     }
-    
+
     @Override
     public void onRegisterMsgSuccess(String serverAddress, Channel channel, Object response,
                                      AbstractMessage requestMessage) {
         if (LOGGER.isInfoEnabled()) {
-            LOGGER.info(
-                "register RM success. server version:" + ((RegisterRMResponse)response).getVersion()
-                    + ",channel:" + channel);
+            LOGGER.info("register RM success. server version:{},channel:{}", ((RegisterRMResponse) response).getVersion(), channel);
         }
-        if (customerKeys == null) {
-            getClientChannelManager().registerChannel(serverAddress, channel);
-            String dbKey = getMergedResourceKeys();
-            RegisterRMRequest message = (RegisterRMRequest)requestMessage;
-            if (message.getResourceIds() != null) {
-                if (!message.getResourceIds().equals(dbKey)) {
-                    sendRegisterMessage(serverAddress, channel, dbKey);
-                }
+        getClientChannelManager().registerChannel(serverAddress, channel);
+        String dbKey = getMergedResourceKeys();
+        RegisterRMRequest message = (RegisterRMRequest) requestMessage;
+        if (message.getResourceIds() != null) {
+            if (!message.getResourceIds().equals(dbKey)) {
+                sendRegisterMessage(serverAddress, channel, dbKey);
             }
         }
+
     }
 
     @Override
@@ -206,12 +191,11 @@ public final class RmRpcClient extends AbstractRpcRemotingClient {
                                   AbstractMessage requestMessage) {
 
         if (response instanceof RegisterRMResponse && LOGGER.isInfoEnabled()) {
-            LOGGER.info(
-                "register RM failed. server version:" + ((RegisterRMResponse)response).getVersion());
+            LOGGER.info("register RM failed. server version:{}", ((RegisterRMResponse) response).getVersion());
         }
-        throw new FrameworkException("register RM failed.");
+        throw new FrameworkException("register RM failed, channel:" + channel);
     }
-    
+
     /**
      * Register new db key.
      *
@@ -219,9 +203,6 @@ public final class RmRpcClient extends AbstractRpcRemotingClient {
      * @param resourceId      the db key
      */
     public void registerResource(String resourceGroupId, String resourceId) {
-        if (LOGGER.isInfoEnabled()) {
-            LOGGER.info("register to RM resourceId:" + resourceId);
-        }
         if (getClientChannelManager().getChannels().isEmpty()) {
             getClientChannelManager().reconnect(transactionServiceGroup);
             return;
@@ -231,34 +212,33 @@ public final class RmRpcClient extends AbstractRpcRemotingClient {
                 String serverAddress = entry.getKey();
                 Channel rmChannel = entry.getValue();
                 if (LOGGER.isInfoEnabled()) {
-                    LOGGER.info("register resource, resourceId:" + resourceId);
+                    LOGGER.info("will register resourceId:{}", resourceId);
                 }
                 sendRegisterMessage(serverAddress, rmChannel, resourceId);
             }
         }
     }
-    
-    private void sendRegisterMessage(String serverAddress, Channel channel, String dbKey) {
+
+    public void sendRegisterMessage(String serverAddress, Channel channel, String resourceId) {
         RegisterRMRequest message = new RegisterRMRequest(applicationId, transactionServiceGroup);
-        message.setResourceIds(dbKey);
+        message.setResourceIds(resourceId);
         try {
             super.sendAsyncRequestWithoutResponse(channel, message);
         } catch (FrameworkException e) {
-            if (e.getErrcode() == FrameworkErrorCode.ChannelIsNotWritable
-                && serverAddress != null) {
+            if (e.getErrcode() == FrameworkErrorCode.ChannelIsNotWritable && serverAddress != null) {
                 getClientChannelManager().releaseChannel(channel, serverAddress);
                 if (LOGGER.isInfoEnabled()) {
-                    LOGGER.info("remove channel:" + channel);
+                    LOGGER.info("remove not writable channel:{}", channel);
                 }
             } else {
-                LOGGER.error("register failed: {}", e.getMessage(), e);
+                LOGGER.error("register resource failed, channel:{},resourceId:{}", channel, resourceId, e);
             }
         } catch (TimeoutException e) {
             LOGGER.error(e.getMessage());
         }
     }
-    
-    private String getMergedResourceKeys() {
+
+    public String getMergedResourceKeys() {
         Map<String, Resource> managedResources = resourceManager.getManagedResources();
         Set<String> resourceIds = managedResources.keySet();
         if (!resourceIds.isEmpty()) {
@@ -275,5 +255,28 @@ public final class RmRpcClient extends AbstractRpcRemotingClient {
             return sb.toString();
         }
         return null;
+    }
+
+    private void registerProcessor() {
+        // 1.registry rm client handle branch commit processor
+        RmBranchCommitProcessor rmBranchCommitProcessor = new RmBranchCommitProcessor(getTransactionMessageHandler(), this);
+        super.registerProcessor(MessageType.TYPE_BRANCH_COMMIT, rmBranchCommitProcessor, messageExecutor);
+        // 2.registry rm client handle branch commit processor
+        RmBranchRollbackProcessor rmBranchRollbackProcessor = new RmBranchRollbackProcessor(getTransactionMessageHandler(), this);
+        super.registerProcessor(MessageType.TYPE_BRANCH_ROLLBACK, rmBranchRollbackProcessor, messageExecutor);
+        // 3.registry rm handler undo log processor
+        RmUndoLogProcessor rmUndoLogProcessor = new RmUndoLogProcessor(getTransactionMessageHandler());
+        super.registerProcessor(MessageType.TYPE_RM_DELETE_UNDOLOG, rmUndoLogProcessor, messageExecutor);
+        // 4.registry TC response processor
+        ClientOnResponseProcessor onResponseProcessor =
+            new ClientOnResponseProcessor(mergeMsgMap, super.getFutures(), getTransactionMessageHandler());
+        super.registerProcessor(MessageType.TYPE_SEATA_MERGE_RESULT, onResponseProcessor, null);
+        super.registerProcessor(MessageType.TYPE_BRANCH_REGISTER_RESULT, onResponseProcessor, null);
+        super.registerProcessor(MessageType.TYPE_BRANCH_STATUS_REPORT_RESULT, onResponseProcessor, null);
+        super.registerProcessor(MessageType.TYPE_GLOBAL_LOCK_QUERY_RESULT, onResponseProcessor, null);
+        super.registerProcessor(MessageType.TYPE_REG_RM_RESULT, onResponseProcessor, null);
+        // 5.registry heartbeat message processor
+        ClientHeartbeatProcessor clientHeartbeatProcessor = new ClientHeartbeatProcessor();
+        super.registerProcessor(MessageType.TYPE_HEARTBEAT_MSG, clientHeartbeatProcessor, null);
     }
 }

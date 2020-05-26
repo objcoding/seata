@@ -16,7 +16,6 @@
 import io.seata.common.XID;
 import io.seata.common.util.NetUtil;
 import io.seata.core.rpc.netty.RpcServer;
-import io.seata.server.UUIDGenerator;
 import io.seata.server.coordinator.DefaultCoordinator;
 
 import java.util.concurrent.LinkedBlockingQueue;
@@ -26,8 +25,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * The type Server test.
  *
- * @author jimin.jm @alibaba-inc.com
- * @date 2018 /12/4
+ * @author slievrly
  */
 public class ServerTest {
 
@@ -44,7 +42,6 @@ public class ServerTest {
 
         RpcServer rpcServer = new RpcServer(workingThreads);
         rpcServer.setHandler(new DefaultCoordinator(rpcServer));
-        UUIDGenerator.init(1);
         XID.setIpAddress(NetUtil.getLocalIp());
         XID.setPort(rpcServer.getListenPort());
         rpcServer.init();

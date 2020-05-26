@@ -15,20 +15,6 @@
  */
 package io.seata.rm.datasource.exec;
 
-import io.seata.common.exception.NotSupportYetException;
-import io.seata.common.exception.ShouldNeverHappenException;
-import io.seata.rm.datasource.PreparedStatementProxy;
-import io.seata.rm.datasource.sql.SQLInsertRecognizer;
-import io.seata.rm.datasource.sql.struct.ColumnMeta;
-import io.seata.rm.datasource.sql.struct.Null;
-import io.seata.rm.datasource.sql.struct.Row;
-import io.seata.rm.datasource.sql.struct.TableMeta;
-import io.seata.rm.datasource.sql.struct.TableRecords;
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -38,6 +24,24 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import io.seata.common.exception.ShouldNeverHappenException;
+import io.seata.rm.datasource.ConnectionProxy;
+import io.seata.rm.datasource.PreparedStatementProxy;
+import io.seata.rm.datasource.StatementProxy;
+import io.seata.sqlparser.SQLInsertRecognizer;
+import io.seata.rm.datasource.sql.struct.ColumnMeta;
+import io.seata.sqlparser.struct.Null;
+import io.seata.rm.datasource.sql.struct.Row;
+import io.seata.rm.datasource.sql.struct.TableMeta;
+import io.seata.rm.datasource.sql.struct.TableRecords;
+import io.seata.sqlparser.struct.SqlMethodExpr;
+import io.seata.sqlparser.struct.SqlSequenceExpr;
+import io.seata.sqlparser.util.JdbcConstants;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+
 import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -46,7 +50,6 @@ import static org.mockito.Mockito.when;
 
 /**
  * @author guoyao
- * @date 2019/3/21
  */
 public class InsertExecutorTest {
 
@@ -56,11 +59,9 @@ public class InsertExecutorTest {
     private static final String USER_STATUS_COLUMN = "user_status";
     private static final Integer PK_VALUE = 100;
 
-    private PreparedStatementProxy statementProxy;
+    private StatementProxy statementProxy;
 
     private SQLInsertRecognizer sqlInsertRecognizer;
-
-    private StatementCallback statementCallback;
 
     private TableMeta tableMeta;
 
@@ -68,8 +69,13 @@ public class InsertExecutorTest {
 
     @BeforeEach
     public void init() {
+        ConnectionProxy connectionProxy = mock(ConnectionProxy.class);
+        when(connectionProxy.getDbType()).thenReturn(JdbcConstants.MYSQL);
+
         statementProxy = mock(PreparedStatementProxy.class);
-        statementCallback = mock(StatementCallback.class);
+        when(statementProxy.getConnectionProxy()).thenReturn(connectionProxy);
+
+        StatementCallback statementCallback = mock(StatementCallback.class);
         sqlInsertRecognizer = mock(SQLInsertRecognizer.class);
         tableMeta = mock(TableMeta.class);
         insertExecutor = Mockito.spy(new InsertExecutor(statementProxy, statementCallback, sqlInsertRecognizer));
@@ -151,6 +157,7 @@ public class InsertExecutorTest {
         when(tableMeta.getPkName()).thenReturn(ID_COLUMN);
         List<Object> pkValues = new ArrayList<>();
         pkValues.add(PK_VALUE);
+        doReturn(0).when(insertExecutor).getPkIndex();
         List pkValuesByColumn = insertExecutor.getPkValuesByColumn();
         Assertions.assertEquals(pkValuesByColumn, pkValues);
     }
@@ -177,6 +184,7 @@ public class InsertExecutorTest {
         pkValuesAuto.add(PK_VALUE);
         //mock getPkValuesByAuto
         doReturn(pkValuesAuto).when(insertExecutor).getPkValuesByAuto();
+        doReturn(0).when(insertExecutor).getPkIndex();
         List pkValuesByColumn = insertExecutor.getPkValuesByColumn();
         //pk value = Null so getPkValuesByAuto
         verify(insertExecutor).getPkValuesByAuto();
@@ -184,21 +192,12 @@ public class InsertExecutorTest {
     }
 
     @Test
-    public void testGetPkValuesByAuto_NotSupportYetException() {
-        Assertions.assertThrows(NotSupportYetException.class, () -> {
-            doReturn(tableMeta).when(insertExecutor).getTableMeta();
-            Map<String, ColumnMeta> columnMetaMap = new HashMap<>();
-            columnMetaMap.put(ID_COLUMN, new ColumnMeta());
-            columnMetaMap.put(USER_ID_COLUMN, new ColumnMeta());
-            when(tableMeta.getPrimaryKeyMap()).thenReturn(columnMetaMap);
-            insertExecutor.getPkValuesByAuto();
-        });
-    }
-
-    @Test
     public void testGetPkValuesByAuto_ShouldNeverHappenException() {
         Assertions.assertThrows(ShouldNeverHappenException.class, () -> {
             doReturn(tableMeta).when(insertExecutor).getTableMeta();
+            PreparedStatement preparedStatement = mock(PreparedStatement.class);
+            when(statementProxy.getTargetStatement()).thenReturn(preparedStatement);
+            when(preparedStatement.getGeneratedKeys()).thenReturn(mock(ResultSet.class));
             Map<String, ColumnMeta> columnMetaMap = new HashMap<>();
             ColumnMeta columnMeta = mock(ColumnMeta.class);
             columnMetaMap.put(ID_COLUMN, columnMeta);
@@ -300,6 +299,99 @@ public class InsertExecutorTest {
         Assertions.assertEquals(pkValuesByAuto, pkValues);
     }
 
+    @Test
+    public void test_getPkIndex() {
+        mockInsertColumns();
+        doReturn(tableMeta).when(insertExecutor).getTableMeta();
+        when(tableMeta.getPkName()).thenReturn(ID_COLUMN);
+        Assertions.assertEquals(0, insertExecutor.getPkIndex());
+    }
+
+    @Test
+    public void test_checkPkValues() {
+        // one parameters.
+        // pk is null support
+        List<Object> pkValues = new ArrayList<>();
+        pkValues.add(Null.get());
+        Assertions.assertTrue(insertExecutor.checkPkValues(pkValues));
+
+        // pk is sequence support.
+        pkValues = new ArrayList<>();
+        pkValues.add(new SqlSequenceExpr());
+        Assertions.assertTrue(insertExecutor.checkPkValues(pkValues));
+
+        // pk is specify value support.
+        pkValues = new ArrayList<>();
+        pkValues.add(1);
+        Assertions.assertTrue(insertExecutor.checkPkValues(pkValues));
+
+        // pk is sql function not support.
+        pkValues = new ArrayList<>();
+        pkValues.add(new SqlMethodExpr());
+        Assertions.assertFalse(insertExecutor.checkPkValues(pkValues));
+
+        // more parameters.
+        // pk is specify value support.
+        pkValues = new ArrayList<>();
+        pkValues.add(1);
+        pkValues.add(2);
+        Assertions.assertTrue(insertExecutor.checkPkValues(pkValues));
+
+        // pk is null support.
+        pkValues = new ArrayList<>();
+        pkValues.add(Null.get());
+        pkValues.add(Null.get());
+        Assertions.assertTrue(insertExecutor.checkPkValues(pkValues));
+
+        // pk is sql function not support.
+        pkValues = new ArrayList<>();
+        pkValues.add(new SqlMethodExpr());
+        pkValues.add(new SqlMethodExpr());
+        Assertions.assertFalse(insertExecutor.checkPkValues(pkValues));
+
+        // pk is sql sequence not support.
+        pkValues = new ArrayList<>();
+        pkValues.add(new SqlSequenceExpr());
+        pkValues.add(new SqlSequenceExpr());
+        Assertions.assertFalse(insertExecutor.checkPkValues(pkValues));
+
+        // pk is specify value and null not support.
+        pkValues = new ArrayList<>();
+        pkValues.add(1);
+        pkValues.add(Null.get());
+        Assertions.assertFalse(insertExecutor.checkPkValues(pkValues));
+
+        // pk is specify value and sql function not support.
+        pkValues = new ArrayList<>();
+        pkValues.add(1);
+        pkValues.add(new SqlMethodExpr());
+        Assertions.assertFalse(insertExecutor.checkPkValues(pkValues));
+
+        // pk is specify value and sequence not support.
+        pkValues = new ArrayList<>();
+        pkValues.add(1);
+        pkValues.add(new SqlSequenceExpr());
+        Assertions.assertFalse(insertExecutor.checkPkValues(pkValues));
+
+        // pk is null and sql function not support.
+        pkValues = new ArrayList<>();
+        pkValues.add(Null.get());
+        pkValues.add(new SqlMethodExpr());
+        Assertions.assertFalse(insertExecutor.checkPkValues(pkValues));
+
+        // pk is null and sequence not support.
+        pkValues = new ArrayList<>();
+        pkValues.add(Null.get());
+        pkValues.add(new SqlSequenceExpr());
+        Assertions.assertFalse(insertExecutor.checkPkValues(pkValues));
+
+        // pk is sql function and sequence not support.
+        pkValues = new ArrayList<>();
+        pkValues.add(new SqlMethodExpr());
+        pkValues.add(new SqlSequenceExpr());
+        Assertions.assertFalse(insertExecutor.checkPkValues(pkValues));
+    }
+
     private List<String> mockInsertColumns() {
         List<String> columns = new ArrayList<>();
         columns.add(ID_COLUMN);
@@ -324,7 +416,8 @@ public class InsertExecutorTest {
         paramters[1] = arrayList1;
         paramters[2] = arrayList2;
         paramters[3] = arrayList3;
-        when(statementProxy.getParameters()).thenReturn(paramters);
+        PreparedStatementProxy psp = (PreparedStatementProxy) this.statementProxy;
+        when(psp.getParameters()).thenReturn(paramters);
     }
 
     private void mockParametersPkWithNull() {
@@ -341,7 +434,8 @@ public class InsertExecutorTest {
         paramters[1] = arrayList1;
         paramters[2] = arrayList2;
         paramters[3] = arrayList3;
-        when(statementProxy.getParameters()).thenReturn(paramters);
+        PreparedStatementProxy psp = (PreparedStatementProxy) this.statementProxy;
+        when(psp.getParameters()).thenReturn(paramters);
     }
 
     private void mockParametersOfOnePk() {
@@ -349,7 +443,8 @@ public class InsertExecutorTest {
         ArrayList arrayList1 = new ArrayList<>();
         arrayList1.add(PK_VALUE);
         paramters[0] = arrayList1;
-        when(statementProxy.getParameters()).thenReturn(paramters);
+        PreparedStatementProxy psp = (PreparedStatementProxy) this.statementProxy;
+        when(psp.getParameters()).thenReturn(paramters);
     }
 
     private void mockInsertRows() {

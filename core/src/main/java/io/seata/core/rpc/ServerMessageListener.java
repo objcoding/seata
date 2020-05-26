@@ -22,8 +22,7 @@ import io.seata.core.rpc.netty.RegisterCheckAuthHandler;
 /**
  * The interface Server message listener.
  *
- * @author jimin.jm @alibaba-inc.com
- * @date 2018 /10/15
+ * @author slievrly
  */
 public interface ServerMessageListener {
 
@@ -32,39 +31,33 @@ public interface ServerMessageListener {
      *
      * @param request the msg id
      * @param ctx     the ctx
-     * @param sender  the sender
      */
-    void onTrxMessage(RpcMessage request, ChannelHandlerContext ctx, ServerMessageSender sender);
+    void onTrxMessage(RpcMessage request, ChannelHandlerContext ctx);
 
     /**
      * On reg rm message.
      *
      * @param request          the msg id
      * @param ctx              the ctx
-     * @param sender           the sender
      * @param checkAuthHandler the check auth handler
      */
-    void onRegRmMessage(RpcMessage request, ChannelHandlerContext ctx,
-                        ServerMessageSender sender, RegisterCheckAuthHandler checkAuthHandler);
+    void onRegRmMessage(RpcMessage request, ChannelHandlerContext ctx, RegisterCheckAuthHandler checkAuthHandler);
 
     /**
      * On reg tm message.
      *
      * @param request          the msg id
      * @param ctx              the ctx
-     * @param sender           the sender
      * @param checkAuthHandler the check auth handler
      */
-    void onRegTmMessage(RpcMessage request, ChannelHandlerContext ctx,
-                        ServerMessageSender sender, RegisterCheckAuthHandler checkAuthHandler);
+    void onRegTmMessage(RpcMessage request, ChannelHandlerContext ctx, RegisterCheckAuthHandler checkAuthHandler);
 
     /**
      * On check message.
      *
      * @param request the msg id
      * @param ctx     the ctx
-     * @param sender  the sender
      */
-    void onCheckMessage(RpcMessage request, ChannelHandlerContext ctx, ServerMessageSender sender);
+    void onCheckMessage(RpcMessage request, ChannelHandlerContext ctx);
 
 }

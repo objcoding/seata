@@ -18,19 +18,21 @@ package io.seata.discovery.registry;
 import java.net.InetSocketAddress;
 import java.util.List;
 
+import io.seata.config.Configuration;
+import io.seata.config.ConfigurationFactory;
+
 /**
  * The interface Registry service.
  *
  * @param <T> the type parameter
- * @author jimin.jm @alibaba-inc.com
- * @date 2019 /1/31
+ * @author slievrly
  */
 public interface RegistryService<T> {
 
     /**
      * The constant PREFIX_SERVICE_MAPPING.
      */
-    String PREFIX_SERVICE_MAPPING = "vgroup_mapping.";
+    String PREFIX_SERVICE_MAPPING = "vgroupMapping.";
     /**
      * The constant PREFIX_SERVICE_ROOT.
      */
@@ -88,4 +90,15 @@ public interface RegistryService<T> {
      * @throws Exception
      */
     void close() throws Exception;
+
+    /**
+     * Get current service group name
+     *
+     * @param key service group
+     * @return the service group name
+     */
+    default String getServiceGroup(String key) {
+        Configuration config = ConfigurationFactory.getInstance();
+        return config.getConfig(PREFIX_SERVICE_ROOT + CONFIG_SPLIT_CHAR + PREFIX_SERVICE_MAPPING + key);
+    }
 }

@@ -15,7 +15,7 @@
  */
 package io.seata.rm.datasource.undo;
 
-import com.alibaba.druid.util.JdbcConstants;
+import io.seata.sqlparser.util.JdbcConstants;
 import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
@@ -34,7 +34,6 @@ import static org.mockito.Mockito.when;
 
 /**
  * @author guoyao
- * @date 2019/4/19
  */
 public class UndoLogManagerTest {
 
@@ -54,7 +53,7 @@ public class UndoLogManagerTest {
         }
         Set<Long> branchIds = new HashSet<>();
         for (int i = 0;i < APPEND_IN_SIZE;i++){
-            branchIds.add(Long.valueOf(i));
+            branchIds.add((long) i);
         }
         Connection connection = mock(Connection.class);
         PreparedStatement preparedStatement = mock(PreparedStatement.class);

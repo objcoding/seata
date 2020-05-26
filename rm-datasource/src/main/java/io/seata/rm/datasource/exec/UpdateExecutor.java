@@ -23,24 +23,33 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.StringJoiner;
 
+import io.seata.common.util.IOUtil;
+import io.seata.config.Configuration;
+import io.seata.config.ConfigurationFactory;
+import io.seata.core.constants.ConfigurationKeys;
+import io.seata.core.constants.DefaultValues;
+import io.seata.rm.datasource.ColumnUtils;
 import io.seata.rm.datasource.StatementProxy;
-import io.seata.rm.datasource.sql.SQLRecognizer;
-import io.seata.rm.datasource.sql.SQLUpdateRecognizer;
 import io.seata.rm.datasource.sql.struct.Field;
 import io.seata.rm.datasource.sql.struct.TableMeta;
 import io.seata.rm.datasource.sql.struct.TableRecords;
-
+import io.seata.sqlparser.SQLRecognizer;
+import io.seata.sqlparser.SQLUpdateRecognizer;
 import org.apache.commons.lang.StringUtils;
 
 /**
  * The type Update executor.
  *
- * @author sharajava
- *
  * @param <T> the type parameter
  * @param <S> the type parameter
+ * @author sharajava
  */
 public class UpdateExecutor<T, S extends Statement> extends AbstractDMLBaseExecutor<T, S> {
+
+    private static final Configuration CONFIG = ConfigurationFactory.getInstance();
+
+    private static final boolean ONLY_CARE_UPDATE_COLUMNS = CONFIG.getBoolean(
+        ConfigurationKeys.TRANSACTION_UNDO_ONLY_CARE_UPDATE_COLUMNS, DefaultValues.DEFAULT_ONLY_CARE_UPDATE_COLUMNS);
 
     /**
      * Instantiates a new Update executor.
@@ -49,7 +58,7 @@ public class UpdateExecutor<T, S extends Statement> extends AbstractDMLBaseExecu
      * @param statementCallback the statement callback
      * @param sqlRecognizer     the sql recognizer
      */
-    public UpdateExecutor(StatementProxy statementProxy, StatementCallback statementCallback,
+    public UpdateExecutor(StatementProxy<S> statementProxy, StatementCallback<T, S> statementCallback,
                           SQLRecognizer sqlRecognizer) {
         super(statementProxy, statementCallback, sqlRecognizer);
     }
@@ -65,20 +74,26 @@ public class UpdateExecutor<T, S extends Statement> extends AbstractDMLBaseExecu
 
     private String buildBeforeImageSQL(TableMeta tableMeta, ArrayList<List<Object>> paramAppenderList) {
         SQLUpdateRecognizer recognizer = (SQLUpdateRecognizer)sqlRecognizer;
-        List<String> updateColumns = recognizer.getUpdateColumns();
         StringBuilder prefix = new StringBuilder("SELECT ");
-        if (!tableMeta.containsPK(updateColumns)) {
-            prefix.append(getColumnNameInSQL(tableMeta.getPkName()) + ", ");
-        }
-        StringBuilder suffix = new StringBuilder(" FROM " + getFromTableInSQL());
+        StringBuilder suffix = new StringBuilder(" FROM ").append(getFromTableInSQL());
         String whereCondition = buildWhereCondition(recognizer, paramAppenderList);
         if (StringUtils.isNotBlank(whereCondition)) {
-            suffix.append(" WHERE " + whereCondition);
+            suffix.append(" WHERE ").append(whereCondition);
         }
         suffix.append(" FOR UPDATE");
         StringJoiner selectSQLJoin = new StringJoiner(", ", prefix.toString(), suffix.toString());
-        for (String updateColumn : updateColumns) {
-            selectSQLJoin.add(updateColumn);
+        if (ONLY_CARE_UPDATE_COLUMNS) {
+            List<String> updateColumns = recognizer.getUpdateColumns();
+            if (!containsPK(updateColumns)) {
+                selectSQLJoin.add(getColumnNameInSQL(tableMeta.getEscapePkName(getDbType())));
+            }
+            for (String columnName : updateColumns) {
+                selectSQLJoin.add(columnName);
+            }
+        } else {
+            for (String columnName : tableMeta.getAllColumns().keySet()) {
+                selectSQLJoin.add(ColumnUtils.addEscape(columnName, getDbType()));
+            }
         }
         return selectSQLJoin.toString();
     }
@@ -90,42 +105,37 @@ public class UpdateExecutor<T, S extends Statement> extends AbstractDMLBaseExecu
             return TableRecords.empty(getTableMeta());
         }
         String selectSQL = buildAfterImageSQL(tmeta, beforeImage);
-        TableRecords afterImage = null;
-        PreparedStatement pst = null;
         ResultSet rs = null;
-        try {
-            pst = statementProxy.getConnection().prepareStatement(selectSQL);
-            int index = 0;
-            for (Field pkField : beforeImage.pkRows()) {
-                index++;
-                pst.setObject(index, pkField.getValue(), pkField.getType());
+        try (PreparedStatement pst = statementProxy.getConnection().prepareStatement(selectSQL)) {
+            List<Field> pkRows = beforeImage.pkRows();
+            for (int i = 1; i <= pkRows.size(); i++) {
+                Field pkField = pkRows.get(i - 1);
+                pst.setObject(i, pkField.getValue(), pkField.getType());
             }
             rs = pst.executeQuery();
-            afterImage = TableRecords.buildRecords(tmeta, rs);
-
+            return TableRecords.buildRecords(tmeta, rs);
         } finally {
-            if (rs != null) {
-                rs.close();
-            }
-            if (pst != null) {
-                pst.close();
-            }
+            IOUtil.close(rs);
         }
-        return afterImage;
     }
 
     private String buildAfterImageSQL(TableMeta tableMeta, TableRecords beforeImage) throws SQLException {
-        SQLUpdateRecognizer recognizer = (SQLUpdateRecognizer)sqlRecognizer;
-        List<String> updateColumns = recognizer.getUpdateColumns();
         StringBuilder prefix = new StringBuilder("SELECT ");
-        if (!tableMeta.containsPK(updateColumns)) {
-            // PK should be included.
-            prefix.append(getColumnNameInSQL(tableMeta.getPkName()) + ", ");
-        }
         String suffix = " FROM " + getFromTableInSQL() + " WHERE " + buildWhereConditionByPKs(beforeImage.pkRows());
         StringJoiner selectSQLJoiner = new StringJoiner(", ", prefix.toString(), suffix);
-        for (String column : updateColumns) {
-            selectSQLJoiner.add(column);
+        if (ONLY_CARE_UPDATE_COLUMNS) {
+            SQLUpdateRecognizer recognizer = (SQLUpdateRecognizer)sqlRecognizer;
+            List<String> updateColumns = recognizer.getUpdateColumns();
+            if (!containsPK(updateColumns)) {
+                selectSQLJoiner.add(getColumnNameInSQL(tableMeta.getEscapePkName(getDbType())));
+            }
+            for (String columnName : updateColumns) {
+                selectSQLJoiner.add(columnName);
+            }
+        } else {
+            for (String columnName : tableMeta.getAllColumns().keySet()) {
+                selectSQLJoiner.add(ColumnUtils.addEscape(columnName, getDbType()));
+            }
         }
         return selectSQLJoiner.toString();
     }
