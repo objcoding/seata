@@ -46,10 +46,11 @@ import org.slf4j.LoggerFactory;
  *
  * @author slievrly
  */
+@Deprecated
 public class DefaultServerMessageListenerImpl implements ServerMessageListener {
     private static final Logger LOGGER = LoggerFactory.getLogger(DefaultServerMessageListenerImpl.class);
     private static BlockingQueue<String> logQueue = new LinkedBlockingQueue<>();
-    private ServerMessageSender serverMessageSender;
+    private RemotingServer remotingServer;
     private final TransactionMessageHandler transactionMessageHandler;
     private static final int MAX_LOG_SEND_THREAD = 1;
     private static final int MAX_LOG_TAKE_SIZE = 1024;
@@ -106,12 +107,17 @@ public class DefaultServerMessageListenerImpl implements ServerMessageListener {
     @Override
     public void onRegRmMessage(RpcMessage request, ChannelHandlerContext ctx, RegisterCheckAuthHandler checkAuthHandler) {
         RegisterRMRequest message = (RegisterRMRequest)request.getBody();
+        String ipAndPort = NetUtil.toStringAddress(ctx.channel().remoteAddress());
         boolean isSuccess = false;
         try {
-            if (null == checkAuthHandler || checkAuthHandler.regResourceManagerCheckAuth(message)) {
+            if (checkAuthHandler == null || checkAuthHandler.regResourceManagerCheckAuth(message)) {
                 ChannelManager.registerRMChannel(message, ctx.channel());
                 Version.putChannelVersion(ctx.channel(), message.getVersion());
                 isSuccess = true;
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("checkAuth for client:{},vgroup:{},applicationId:{}",
+                            ipAndPort,message.getTransactionServiceGroup(),message.getApplicationId());
+                }
             }
         } catch (Exception exx) {
             isSuccess = false;
@@ -119,7 +125,7 @@ public class DefaultServerMessageListenerImpl implements ServerMessageListener {
         }
         getServerMessageSender().sendResponse(request, ctx.channel(), new RegisterRMResponse(isSuccess));
         if (LOGGER.isInfoEnabled()) {
-            LOGGER.info("rm register success,message:{},channel:{}", message, ctx.channel());
+            LOGGER.info("RM register success,message:{},channel:{}", message, ctx.channel());
         }
     }
 
@@ -130,12 +136,12 @@ public class DefaultServerMessageListenerImpl implements ServerMessageListener {
         Version.putChannelVersion(ctx.channel(), message.getVersion());
         boolean isSuccess = false;
         try {
-            if (null == checkAuthHandler || checkAuthHandler.regTransactionManagerCheckAuth(message)) {
+            if (checkAuthHandler == null || checkAuthHandler.regTransactionManagerCheckAuth(message)) {
                 ChannelManager.registerTMChannel(message, ctx.channel());
                 Version.putChannelVersion(ctx.channel(), message.getVersion());
                 isSuccess = true;
-                if (LOGGER.isInfoEnabled()) {
-                    LOGGER.info("checkAuth for client:{},vgroup:{},applicationId:{}",
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("checkAuth for client:{},vgroup:{},applicationId:{}",
                             ipAndPort,message.getTransactionServiceGroup(),message.getApplicationId());
                 }
             }
@@ -144,6 +150,9 @@ public class DefaultServerMessageListenerImpl implements ServerMessageListener {
             LOGGER.error(exx.getMessage());
         }
         getServerMessageSender().sendResponse(request, ctx.channel(), new RegisterTMResponse(isSuccess));
+        if (LOGGER.isInfoEnabled()) {
+            LOGGER.info("TM register success,message:{},channel:{}", message, ctx.channel());
+        }
     }
 
     @Override
@@ -173,20 +182,20 @@ public class DefaultServerMessageListenerImpl implements ServerMessageListener {
      *
      * @return the server message sender
      */
-    public ServerMessageSender getServerMessageSender() {
-        if (serverMessageSender == null) {
+    public RemotingServer getServerMessageSender() {
+        if (remotingServer == null) {
             throw new IllegalArgumentException("serverMessageSender must not be null");
         }
-        return serverMessageSender;
+        return remotingServer;
     }
 
     /**
      * Sets server message sender.
      *
-     * @param serverMessageSender the server message sender
+     * @param remotingServer the remoting server
      */
-    public void setServerMessageSender(ServerMessageSender serverMessageSender) {
-        this.serverMessageSender = serverMessageSender;
+    public void setServerMessageSender(RemotingServer remotingServer) {
+        this.remotingServer = remotingServer;
     }
 
     /**
